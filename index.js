@@ -35,6 +35,29 @@ function findRoomByWs(ws) {
   }
   return null;
 }
+const SUITS = ["♠", "♣", "♦", "♥"];
+const RANKS = ["3","4","5","6","7","8","9","10","J","Q","K","A","2"];
+
+function makeDeck() {
+  const deck = [];
+  for (const r of RANKS) {
+    for (const s of SUITS) {
+      deck.push({ r, s });
+    }
+  }
+  return deck;
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+function cardToString(c) {
+  return `${c.r}${c.s}`;
+}
 
 function createRoom(data, ws) {
   const code = nanoid(6).toUpperCase();
@@ -46,6 +69,7 @@ function createRoom(data, ws) {
     status: "lobby",
     hostId: playerId,
     players: [{ id: playerId, name, ws }],
+    game: null
   };
 
   rooms.set(code, room);
@@ -53,6 +77,7 @@ function createRoom(data, ws) {
   send(ws, "created_room", { roomCode: code, playerId });
   broadcast(room, "room_state", makeRoomState(room));
 }
+ 
 
 function joinRoom(data, ws) {
   const code = (data?.roomCode || "").toUpperCase().trim();
@@ -70,6 +95,7 @@ function joinRoom(data, ws) {
   broadcast(room, "room_state", makeRoomState(room));
 }
 function startGame(data, ws) {
+  console.log("🚀 startGame called");
   const code = (data?.roomCode || "").toUpperCase().trim();
   const room = rooms.get(code);
   if (!room) return send(ws, "error", { message: "Room not found" });
@@ -94,6 +120,50 @@ function startGame(data, ws) {
   }
 
   room.status = "playing";
+    // tạo & xáo bài
+  const deck = makeDeck();
+  shuffle(deck);
+
+  // chia 13 lá mỗi người
+  const hands = {};
+  room.players.forEach((p) => {
+    hands[p.id] = deck.splice(0, 13);
+  });
+
+  // tìm người đi trước (ai có 3♠)
+  let turnPlayerId = room.players[0].id;
+  for (const p of room.players) {
+    if (hands[p.id].some((c) => c.r === "3" && c.s === "♠")) {
+      turnPlayerId = p.id;
+      break;
+    }
+  }
+
+  // lưu game state
+  room.game = {
+    turnPlayerId,
+    hands,
+    lastPlay: null
+  };
+
+  // gửi bài RIÊNG cho từng người
+  room.players.forEach((p) => {
+    send(p.ws, "your_hand", {
+      roomCode: room.code,
+      hand: hands[p.id].map(cardToString)
+    });
+  });
+
+  // gửi state CHUNG
+  broadcast(room, "game_state", {
+    roomCode: room.code,
+    turnPlayerId: room.game.turnPlayerId,
+    players: room.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      cardsCount: room.game.hands[p.id].length
+    }))
+  });
 
   // báo cho tất cả
   broadcast(room, "room_state", makeRoomState(room));
