@@ -69,6 +69,36 @@ function joinRoom(data, ws) {
   send(ws, "joined_room", { roomCode: code, playerId });
   broadcast(room, "room_state", makeRoomState(room));
 }
+function startGame(data, ws) {
+  const code = (data?.roomCode || "").toUpperCase().trim();
+  const room = rooms.get(code);
+  if (!room) return send(ws, "error", { message: "Room not found" });
+
+  // player đang gửi lệnh là ai?
+  const player = room.players.find((p) => p.ws === ws);
+  if (!player) return send(ws, "error", { message: "Not in this room" });
+
+  // chỉ host mới được start
+  if (player.id !== room.hostId) {
+    return send(ws, "error", { message: "Only host can start" });
+  }
+
+  // tối thiểu 2 người
+  if (room.players.length < 2) {
+    return send(ws, "error", { message: "Need at least 2 players" });
+  }
+
+  // nếu đang playing rồi thì thôi
+  if (room.status === "playing") {
+    return send(ws, "error", { message: "Game already started" });
+  }
+
+  room.status = "playing";
+
+  // báo cho tất cả
+  broadcast(room, "room_state", makeRoomState(room));
+  broadcast(room, "game_started", { roomCode: room.code });
+}
 
 function leaveRoom(ws) {
   const found = findRoomByWs(ws);
@@ -111,6 +141,7 @@ wss.on("connection", (ws) => {
 
     if (type === "create_room") return createRoom(data, ws);
     if (type === "join_room") return joinRoom(data, ws);
+    if (type === "start_game") return startGame(data, ws);
 
     return send(ws, "error", { message: `Unknown event: ${type}` });
   });
